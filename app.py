@@ -69,24 +69,25 @@ def index():
 def list_devices():
     devices = []
     try:
-        import IOBluetooth
-        paired = IOBluetooth.IOBluetoothDevice.pairedDevices() or []
-        for dev in paired:
-            name = dev.name() or ''
-            addr = dev.addressString() or ''
-            formatted_addr = addr.replace('-', ':').upper()
-            if 'peripage' in name.lower() or 'a6' in name.lower():
-                devices.append({
-                    'name': name,
-                    'mac': formatted_addr,
-                    'is_peripage': True
-                })
-            else:
-                devices.append({
-                    'name': name,
-                    'mac': formatted_addr,
-                    'is_peripage': False
-                })
+        # Use macOS system_profiler to query paired bluetooth devices safely without TCC privacy crash
+        res = subprocess.run(
+            ["system_profiler", "SPBluetoothDataType", "-json"],
+            capture_output=True,
+            text=True,
+            timeout=5.0
+        )
+        if res.returncode == 0:
+            data = json.loads(res.stdout).get("SPBluetoothDataType", [{}])[0]
+            for section in ["device_connected", "device_not_connected"]:
+                for item in data.get(section, []):
+                    for name, details in item.items():
+                        addr = details.get("device_address", "").replace("-", ":").upper()
+                        is_peri = "peripage" in name.lower() or "a6" in name.lower()
+                        devices.append({
+                            'name': name,
+                            'mac': addr,
+                            'is_peripage': is_peri
+                        })
     except Exception as e:
         pass
 
