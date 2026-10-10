@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeriPage A6 Thermal Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Top Navigation / Status Header -->
+        <header class="header">
+            <div class="brand">
+                <div class="logo-icon">🖨️</div>
+                <div class="brand-text">
+                    <h1>PeriPage A6 Studio</h1>
+                    <span class="subtitle">macOS Thermal Printing Suite</span>
+                </div>
+            </div>
+
+            <div class="device-panel">
+                <div class="mac-input-group">
+                    <label for="macAddress">기기 MAC</label>
+                    <input type="text" id="macAddress" value="" placeholder="기기 검색을 눌러주세요"
+                        spellcheck="false">
+                    <button type="button" class="btn-icon-sm" id="btnScanDevices"
+                        title="내 Mac에서 페어링된 PeriPage 기기 자동 검색">🔍 기기 검색</button>
+                </div>
+
+                <div class="status-badge" id="statusBadge">
+                    <span class="status-dot"></span>
+                    <span class="status-text" id="statusText">확인 대기</span>
+                    <span class="battery-indicator" id="batteryIndicator" style="display: none;">
+                        <span class="battery-icon">🔋</span>
+                        <span id="batteryVal">--%</span>
+                    </span>
+                </div>
+
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="btnCheckStatus" title="기기 연결 및 배터리 상태 확인">
+                        <span class="btn-icon">⚡</span> 상태 확인
+                    </button>
+                    <button class="btn btn-secondary" id="btnQuickFeed" title="용지 120px 급지">
+                        <span class="btn-icon">📜</span> 여백 급지
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- Left Panel: Controls & Input Tabs -->
+            <section class="control-section">
+                <!-- Mode Tabs -->
+                <nav class="nav-tabs" role="tablist">
+                    <button class="tab-btn active" data-tab="tab-text" id="tabTextBtn">
+                        <span class="tab-icon">✍️</span> 텍스트
+                    </button>
+                    <button class="tab-btn" data-tab="tab-image" id="tabImageBtn">
+                        <span class="tab-icon">🖼️</span> 이미지
+                    </button>
+                    <button class="tab-btn" data-tab="tab-qr" id="tabQrBtn">
+                        <span class="tab-icon">📱</span> QR 코드
+                    </button>
+                    <button class="tab-btn" data-tab="tab-template" id="tabTemplateBtn">
+                        <span class="tab-icon">📋</span> 영수증/메모
+                    </button>
+                </nav>
+
+                <!-- Tab 1: Text Print -->
+                <div class="tab-content active" id="tab-text">
+                    <div class="form-group">
+                        <div class="label-row">
+                            <label for="textInput">인쇄할 내용 (한글 완벽 지원)</label>
+                            <span class="counter" id="textCounter">0자</span>
+                        </div>
+                        <textarea id="textInput" rows="6"
+                            placeholder="인쇄할 텍스트를 입력하세요.&#10;한글, 영문, 특수문자 모두 지원됩니다."></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label for="fontSize">글자 크기: <span id="fontSizeVal">26</span>px</label>
+                            <input type="range" id="fontSize" min="16" max="48" value="26" step="2">
+                        </div>
+                        <div class="form-group align-group">
+                            <label>정렬</label>
+                            <div class="segmented-control" id="textAlignControl">
+                                <button type="button" class="segment-btn active" data-align="left">좌측</button>
+                                <button type="button" class="segment-btn" data-align="center">가운데</button>
+                                <button type="button" class="segment-btn" data-align="right">우측</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Image Print -->
+                <div class="tab-content" id="tab-image">
+                    <div class="drop-zone" id="dropZone">
+                        <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                        <div class="drop-zone-content">
+                            <div class="upload-icon">📁</div>
+                            <p class="drop-title">이미지를 드래그하거나 클릭하여 업로드</p>
+                            <p class="drop-desc">PNG, JPG, WebP 지원 (최적 해상도 자동 변환)</p>
+                        </div>
+                    </div>
+
+                    <div class="image-options" id="imageOptionsBar" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="thresholdRange">흑백 대비 임계값: <span id="thresholdVal">128</span></label>
+                                <input type="range" id="thresholdRange" min="50" max="200" value="128">
+                            </div>
+                            <div class="form-group">
+                                <label>디더링</label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="ditherToggle" checked>
+                                    <span class="toggle-slider"></span>
+                                    <span class="toggle-label">Floyd-Steinberg</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: QR Code Print -->
+                <div class="tab-content" id="tab-qr">
+                    <div class="form-group">
+                        <label for="qrInput">URL 또는 텍스트 데이터</label>
+                        <input type="text" id="qrInput" placeholder="https://example.com 또는 텍스트"
+                            value="https://github.com/bitrate16/peripage-python">
+                    </div>
+                    <div class="form-group">
+                        <label for="qrLabelInput">하단 라벨 문구 (선택 사항)</label>
+                        <input type="text" id="qrLabelInput" placeholder="QR 코드 아래에 인쇄될 설명 문구">
+                    </div>
+                </div>
+
+                <!-- Tab 4: Template Print -->
+                <div class="tab-content" id="tab-template">
+                    <div class="template-header-bar">
+                        <div class="template-selector">
+                            <button type="button" class="template-chip active" data-tmpl="receipt">🧾 간이 영수증</button>
+                            <button type="button" class="template-chip" data-tmpl="todo">📋 오늘의 할 일</button>
+                            <button type="button" class="template-chip" data-tmpl="quote">💬 명언 / 메모</button>
+                            <button type="button" class="template-chip" data-tmpl="label">🏷️ 상품 라벨</button>
+                        </div>
+                    </div>
+
+                    <div class="template-toolbar">
+                        <button type="button" class="tool-btn" id="btnInsertDate" title="현재 날짜/시간 삽입">
+                            <span>🕒</span> 일시 삽입
+                        </button>
+                        <button type="button" class="tool-btn" id="btnInsertDoubleLine" title="이중 구분선(===) 삽입">
+                            <span>═</span> 이중선
+                        </button>
+                        <button type="button" class="tool-btn" id="btnInsertDashLine" title="점선 구분선(---) 삽입">
+                            <span>─</span> 점선
+                        </button>
+                        <button type="button" class="tool-btn" id="btnInsertCheck" title="체크박스(□) 삽입">
+                            <span>☑️</span> 체크박스
+                        </button>
+                        <button type="button" class="tool-btn tool-btn-secondary" id="btnResetTemplate" title="선택한 템플릿 기본 서식으로 초기화">
+                            <span>↺</span> 서식 초기화
+                        </button>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="label-row">
+                            <label for="templateText">템플릿 내용 편집 (자유롭게 수정 가능)</label>
+                            <span class="counter" id="templateCounter">0자</span>
+                        </div>
+                        <textarea id="templateText" rows="10" spellcheck="false"
+                            placeholder="템플릿을 선택하거나 직접 내용을 편집하세요. 우측에서 실시간 미리보기가 지원됩니다."></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label for="templateFontSize">글자 크기: <span id="templateFontSizeVal">24</span>px</label>
+                            <input type="range" id="templateFontSize" min="16" max="44" value="24" step="2">
+                        </div>
+                        <div class="form-group align-group">
+                            <label>정렬</label>
+                            <div class="segmented-control" id="templateAlignControl">
+                                <button type="button" class="segment-btn" data-align="left">좌측</button>
+                                <button type="button" class="segment-btn active" data-align="center">가운데</button>
+                                <button type="button" class="segment-btn" data-align="right">우측</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Common Print Settings Panel -->
+                <div class="settings-card">
+                    <div class="card-header">
+                        <span class="card-icon">⚙️</span>
+                        <h3>인쇄 옵션</h3>
+                    </div>
+
+                    <div class="settings-grid">
+                        <div class="form-group">
+                            <label for="concentration">인쇄 농도</label>
+                            <div class="segmented-control" id="concentrationControl">
+                                <button type="button" class="segment-btn" data-val="0">연함</button>
+                                <button type="button" class="segment-btn" data-val="1">보통</button>
+                                <button type="button" class="segment-btn active" data-val="2">진함</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="breakSize">절취선 여백 급지: <span id="breakSizeVal">120</span>px</label>
+                            <input type="range" id="breakSize" min="30" max="200" value="120" step="10">
+                            <span class="helper-text">인쇄 후 종이가 절취선 밖으로 배출되는 길이입니다.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Action Button -->
+                <button class="btn btn-primary btn-print" id="btnPrint">
+                    <span class="btn-spinner" id="printSpinner" style="display: none;"></span>
+                    <span class="btn-icon" id="printIcon">🖨️</span>
+                    <span id="printBtnText">지금 인쇄하기</span>
+                </button>
+            </section>
+
+            <!-- Right Panel: Thermal Receipt Preview -->
+            <section class="preview-section">
+                <div class="preview-header">
+                    <h2>실제 출력 미리보기</h2>
+                    <span class="badge-width" id="paperWidthBadge">576px (304 DPI)</span>
+                </div>
+
+                <div class="receipt-viewport">
+                    <div class="receipt-paper" id="receiptPaper">
+                        <div class="tear-edge tear-top"></div>
+                        <div class="receipt-content" id="receiptContent">
+                            <div class="placeholder-preview" id="placeholderPreview">
+                                <span class="placeholder-icon">📄</span>
+                                <p>내용을 입력하거나 이미지를 선택하면<br>실시간 감열지 미리보기가 표시됩니다.</p>
+                            </div>
+                            <canvas id="previewCanvas" width="576" height="200" style="display: none;"></canvas>
+                        </div>
+                        <div class="tear-edge tear-bottom"></div>
+                    </div>
+                </div>
+
+                <!-- Toast Notification Container -->
+                <div class="toast-container" id="toastContainer"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js?v=2"></script>
+</body>
+
+</html>

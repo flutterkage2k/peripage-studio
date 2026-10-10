@@ -26,7 +26,22 @@ import time
 import qrcode
 import typing
 import enum
-import bluetooth
+try:
+    import bluetooth
+except ImportError:
+    bluetooth = None
+
+try:
+    import IOBluetooth
+    import Foundation
+    import objc
+except ImportError:
+    IOBluetooth = None
+    Foundation = None
+    objc = None
+
+import serial
+import platform
 
 import PIL.Image
 import PIL.ImageOps
@@ -91,6 +106,181 @@ class PrinterType(enum.Enum):
 
     def __init__(self, spec: PrinterTypeSpecs):
         self.spec = spec
+
+
+class SerialSocketWrapper:
+    """
+    Socket-like wrapper over pyserial Serial port for macOS / serial communication.
+    """
+
+    def __init__(self, port: str, timeout: float = 1.0, baudrate: int = 115200):
+        self.port = port
+        self.timeout = timeout
+        self.baudrate = baudrate
+        self.ser = None
+
+    def connect(self):
+        self.ser = serial.Serial(self.port, baudrate=self.baudrate, timeout=self.timeout)
+        time.sleep(0.5)
+
+    def close(self):
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+        self.ser = None
+
+    def settimeout(self, timeout: float):
+        self.timeout = timeout
+        if self.ser and self.ser.is_open:
+            self.ser.timeout = timeout
+
+    def send(self, data: bytes):
+        if self.ser and self.ser.is_open:
+            return self.ser.write(data)
+        raise ConnectionError("Serial port is not connected")
+
+    def recv(self, size: int = 1024) -> bytes:
+        if self.ser and self.ser.is_open:
+            if self.ser.in_waiting == 0:
+                b = self.ser.read(1)
+                if not b:
+                    return b""
+                waiting = min(self.ser.in_waiting, size - 1)
+                return b + (self.ser.read(waiting) if waiting > 0 else b"")
+            else:
+                to_read = min(self.ser.in_waiting, size)
+                return self.ser.read(to_read)
+        raise ConnectionError("Serial port is not connected")
+
+    def getpeername(self):
+        if self.ser and self.ser.is_open:
+            return (self.port, 0)
+        raise ConnectionError("Serial port is not connected")
+
+
+if objc is not None and Foundation is not None:
+    class _RFCOMMDelegate(Foundation.NSObject):
+        def init(self):
+            self = objc.super(_RFCOMMDelegate, self).init()
+            self.channel = None
+            self.buffer = bytearray()
+            self.is_open = False
+            return self
+
+        def rfcommChannelOpenComplete_status_(self, channel, status):
+            if status == 0:
+                self.channel = channel
+                self.is_open = True
+
+        def rfcommChannelClosed_(self, channel):
+            self.is_open = False
+            self.channel = None
+
+        def rfcommChannelData_data_length_(self, channel, data_ptr, length):
+            self.buffer.extend(bytes(data_ptr[:length]))
+
+
+class IOBluetoothSocketWrapper:
+    """
+    Native macOS RFCOMM socket wrapper using IOBluetooth framework.
+    """
+
+    def __init__(self, mac: str, channel_id: int = 1, timeout: float = 3.0):
+        # Format MAC address (e.g. 20:20:08:1B:44:64 or 20-20-08-1b-44-64)
+        self.mac = mac.replace('-', ':').upper()
+        self.channel_id = channel_id
+        self.timeout = timeout
+        self.dev = None
+        self.channel = None
+        self.delegate = None
+
+    def connect(self):
+        if IOBluetooth is None:
+            raise RuntimeError("IOBluetooth is not available on this platform")
+
+        self.dev = IOBluetooth.IOBluetoothDevice.deviceWithAddressString_(self.mac)
+        if not self.dev:
+            raise ConnectionError(f"Bluetooth device with address {self.mac} not found")
+
+        if not self.dev.isConnected():
+            self.dev.openConnection()
+            time.sleep(0.5)
+
+        self.delegate = _RFCOMMDelegate.alloc().init()
+        status, channel = self.dev.openRFCOMMChannelSync_withChannelID_delegate_(None, self.channel_id, self.delegate)
+        if status != 0 or channel is None:
+            # Clean up and retry once if device was busy
+            try:
+                self.dev.closeConnection()
+            except:
+                pass
+            time.sleep(1.2)
+            self.dev.openConnection()
+            time.sleep(0.5)
+            status, channel = self.dev.openRFCOMMChannelSync_withChannelID_delegate_(None, self.channel_id, self.delegate)
+            if status != 0 or channel is None:
+                raise ConnectionError(f"Failed to open RFCOMM channel {self.channel_id} (status: {status})")
+
+        self.channel = channel
+        self.delegate.channel = channel
+        self.delegate.is_open = True
+
+    def close(self):
+        if self.channel:
+            try:
+                self.channel.closeChannel()
+            except:
+                pass
+            self.channel = None
+        if self.dev:
+            try:
+                self.dev.closeConnection()
+            except:
+                pass
+            self.dev = None
+        self.delegate = None
+        time.sleep(1.0)
+
+    def settimeout(self, timeout: float):
+        self.timeout = timeout
+
+    def send(self, data: bytes):
+        if not self.channel:
+            raise ConnectionError("RFCOMM channel is not connected")
+
+        mtu = self.channel.getMTU() or 100
+        chunk_size = max(60, min(mtu, 120))
+        total_sent = 0
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            status = self.channel.writeSync_length_(chunk, len(chunk))
+            if status != 0:
+                raise IOError(f"RFCOMM writeSync failed with status {status}")
+            total_sent += len(chunk)
+            if len(data) > chunk_size:
+                time.sleep(0.01)
+        return total_sent
+
+    def recv(self, size: int = 1024) -> bytes:
+        if not self.delegate:
+            return b""
+        run_loop = Foundation.NSRunLoop.currentRunLoop()
+        end_time = time.time() + self.timeout
+        while time.time() < end_time and len(self.delegate.buffer) == 0:
+            run_loop.runUntilDate_(Foundation.NSDate.dateWithTimeIntervalSinceNow_(0.05))
+
+        if len(self.delegate.buffer) == 0:
+            return b""
+
+        to_read = min(len(self.delegate.buffer), size)
+        res = bytes(self.delegate.buffer[:to_read])
+        del self.delegate.buffer[:to_read]
+        return res
+
+    def getpeername(self):
+        if self.dev and self.dev.isConnected():
+            return (self.mac, self.channel_id)
+        raise ConnectionError("Not connected")
+
 
 class Printer:
     """
@@ -169,9 +359,16 @@ class Printer:
         `reset()` after connecting.
         """
 
-        self.sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-        self.sock.connect((self.mac, 1))
-        self.sock.settimeout(self.timeout)
+        if platform.system() == 'Darwin' and IOBluetooth is not None and not self.mac.startswith('/dev/'):
+            self.sock = IOBluetoothSocketWrapper(self.mac, timeout=self.timeout)
+            self.sock.connect()
+        elif self.mac.startswith('/dev/') or bluetooth is None:
+            self.sock = SerialSocketWrapper(self.mac, timeout=self.timeout)
+            self.sock.connect()
+        else:
+            self.sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+            self.sock.connect((self.mac, 1))
+            self.sock.settimeout(self.timeout)
 
     def reconnect(self) -> None:
         """
@@ -186,9 +383,16 @@ class Printer:
             self.sock.close()
             del self.sock
 
-        self.sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-        self.sock.connect((self.mac, 1))
-        self.sock.settimeout(self.timeout)
+        if platform.system() == 'Darwin' and IOBluetooth is not None and not self.mac.startswith('/dev/'):
+            self.sock = IOBluetoothSocketWrapper(self.mac, timeout=self.timeout)
+            self.sock.connect()
+        elif self.mac.startswith('/dev/') or bluetooth is None:
+            self.sock = SerialSocketWrapper(self.mac, timeout=self.timeout)
+            self.sock.connect()
+        else:
+            self.sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+            self.sock.connect((self.mac, 1))
+            self.sock.settimeout(self.timeout)
 
     def disconnect(self) -> None:
         """
@@ -327,7 +531,12 @@ class Printer:
 
         Example: Peripage A6+ returns `\\x00@` (equals to `bytes[2] = { 0, 64 }`).
         """
-        return int(self.askPrinter(bytes.fromhex('10ff50f1'))[1])
+        res = self.askPrinter(bytes.fromhex('10ff50f1'))
+        if len(res) >= 2:
+            return int(res[1])
+        elif len(res) == 1:
+            return int(res[0])
+        return 100
 
     def getDeviceHardware(self) -> bytes:
         """
@@ -511,20 +720,15 @@ class Printer:
     def printBreak(self, size: int=0x40) -> None:
         """
         Ask printer to print out a break of fixed size.
-
-        Printer allows user to feed out some paper to wipe away tears of this
-        module developer.
-
-        Request: `1b4a+bytes[1]:big_endian`.
+        Uses blank image rows to ensure physical paper feed across all firmware versions.
 
         Arguments:
         * `size` - break size in range `(0, 0xff)`
         """
 
         size = min(0xff, max(0x01, size))
-        request = bytes.fromhex('1b4a') + int.to_bytes(size, 1, 'big')
-
-        self.tellPrinter(request)
+        empty_rows = [b'\x00' * self.getRowBytes() for _ in range(size)]
+        self.printRowBytesList(empty_rows)
 
     def writeASCII(self, text: str='\n', wait=False) -> None:
         """
@@ -817,27 +1021,25 @@ class Printer:
         # Delegate to impl
         self.printRowBytesList([ imagebytes[i:i+self.getRowBytes()] for i in range(0, len(imagebytes), self.getRowBytes()) ], delay=delay)
 
-    def printImage(self, img: PIL.Image.Image, delay=0.01, resample=PIL.Image.Resampling.NEAREST) -> None:
+    def printImage(self, img: PIL.Image.Image, delay=0.01, resample=PIL.Image.Resampling.NEAREST, dither: bool=True) -> None:
         """
         Print PIL Image on this printer with automatic internal to-blackwhite
-        conversion.
-
-        WARNING: In order to prevent the overhead of the printer (and possibly
-        loose some data but to limitations of the in-printer buffer) it is
-        suggested to split image into many vertical pieces and wait a
-        reasonable amount of time to let the printer to cooldown.
+        conversion and optional dithering.
 
         Arguments:
         * `img` - your pretty PIL Image.
         * `delay` - delay between printing each row of the image.
-        * `resample` - resampling mode of the image, used to automatically
-        rescale image to fit the printer width of `Printer.getRowWidth()`.
+        * `resample` - resampling mode of the image.
+        * `dither` - whether to apply Floyd-Steinberg dithering.
         """
 
         img = img.convert('L')
         img = PIL.ImageOps.invert(img)
         img = img.resize((self.getRowWidth(), int(self.getRowWidth() / img.size[0] * img.size[1])), resample)
-        img = img.convert('1')
+        if dither:
+            img = img.convert('1', dither=PIL.Image.Dither.FLOYDSTEINBERG)
+        else:
+            img = img.convert('1', dither=PIL.Image.Dither.NONE)
 
         imgbytes = img.tobytes()
         self.printImageBytes(imgbytes, delay=delay)
