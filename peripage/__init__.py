@@ -202,8 +202,10 @@ class IOBluetoothSocketWrapper:
             raise ConnectionError(f"Bluetooth device with address {self.mac} not found")
 
         if not self.dev.isConnected():
-            self.dev.openConnection()
-            time.sleep(0.5)
+            res = self.dev.openConnection()
+            if res != 0:
+                raise ConnectionError("프린터 전원이 꺼져 있거나 연결할 수 없습니다. (프린터 전원 버튼을 켜주세요)")
+            time.sleep(0.4)
 
         self.delegate = _RFCOMMDelegate.alloc().init()
         status, channel = self.dev.openRFCOMMChannelSync_withChannelID_delegate_(None, self.channel_id, self.delegate)
@@ -213,12 +215,14 @@ class IOBluetoothSocketWrapper:
                 self.dev.closeConnection()
             except:
                 pass
-            time.sleep(1.2)
-            self.dev.openConnection()
-            time.sleep(0.5)
+            time.sleep(1.0)
+            res2 = self.dev.openConnection()
+            if res2 != 0:
+                raise ConnectionError("프린터 전원이 꺼져 있거나 연결할 수 없습니다. (프린터 전원 버튼을 켜주세요)")
+            time.sleep(0.4)
             status, channel = self.dev.openRFCOMMChannelSync_withChannelID_delegate_(None, self.channel_id, self.delegate)
             if status != 0 or channel is None:
-                raise ConnectionError(f"Failed to open RFCOMM channel {self.channel_id} (status: {status})")
+                raise ConnectionError(f"프린터 RFCOMM 채널 {self.channel_id} 열기 실패 (status: {status})")
 
         self.channel = channel
         self.delegate.channel = channel
